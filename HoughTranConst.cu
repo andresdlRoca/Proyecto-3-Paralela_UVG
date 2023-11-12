@@ -126,8 +126,8 @@ __global__ void GPU_HoughTranConst(unsigned char *pic, int w, int h, int *acc, f
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
             // utilizar memoria constante para senos y cosenos
-             float r = xCoord * cosf(tIdx) + yCoord * sinf(tIdx); //probar con esto para ver diferencia en tiempo
-            //float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
+            //float r = xCoord * cosf(tIdx) + yCoord * sinf(tIdx);//probar con esto para ver diferencia en tiempo
+            float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
             int rIdx = (r + rMax) / rScale;
             // debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
@@ -196,9 +196,6 @@ int main(int argc, char **argv)
     float *pcSin = (float *)malloc(sizeof(float) * degreeBins);
     float rad = 0;
 
-    cudaMemcpyToSymbol(d_Cos, pcCos, sizeof(float) * degreeBins);
-    cudaMemcpyToSymbol(d_Sin, pcSin, sizeof(float) * degreeBins);
-    
     for (i = 0; i < degreeBins; i++)
     {
         pcCos[i] = cos(rad);
@@ -209,6 +206,10 @@ int main(int argc, char **argv)
     float rMax = sqrt(1.0 * w * w + 1.0 * h * h) / 2;
     float rScale = 2 * rMax / rBins;
 
+    // Copiar valores de memoria constante en device 
+    cudaMemcpyToSymbol(d_Cos, pcCos, sizeof(float) * degreeBins);
+    cudaMemcpyToSymbol(d_Sin, pcSin, sizeof(float) * degreeBins);
+    
     // TODO eventualmente volver memoria global
     //cudaMemcpy(d_Cos, pcCos, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
     //cudaMemcpy(d_Sin, pcSin, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
@@ -223,6 +224,7 @@ int main(int argc, char **argv)
 
     cudaMalloc((void **)&d_in, sizeof(unsigned char) * w * h);
     cudaMalloc((void **)&d_hough, sizeof(int) * degreeBins * rBins);
+    
     cudaMemcpy(d_in, h_in, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
     cudaMemset(d_hough, 0, sizeof(int) * degreeBins * rBins);
 
