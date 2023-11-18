@@ -22,6 +22,11 @@ const int degreeBins = 180 / degreeInc;
 const int rBins = 100;
 const float radInc = degreeInc * M_PI / 180;
 
+// memoria constante para la tabla de senos y cosenos
+__constant__ float d_Cos[degreeBins];
+__constant__ float d_Sin[degreeBins];
+
+
 void drawLinesOnImage(unsigned char *originalImage, int w, int h, int *h_hough, float rScale, float rMax, int threshold) {
 
   cv::Mat img(h, w, CV_8UC1, originalImage);
@@ -59,7 +64,7 @@ void drawLinesOnImage(unsigned char *originalImage, int w, int h, int *h_hough, 
     cv::line(imgColor, cv::Point(cvRound(xValue + (1000 * (-sinTheta))), cvRound(yValue + (1000 * cosTheta))), cv::Point(cvRound(xValue - (1000 * (-sinTheta))), cvRound(yValue - (1000 * cosTheta))), cv::Scalar(255, 150, 0), 2, cv::LINE_AA);
   }
 
-  cv::imwrite("lines_tran_const.jpg", imgColor);
+  cv::imwrite("lines_constant.jpg", imgColor);
 }
 
 
@@ -95,22 +100,16 @@ void CPU_HoughTran(unsigned char *pic, int w, int h, int **acc)
 }
 
 //*****************************************************************
-// usar memoria constante para la tabla de senos y cosenos
-// inicializarlo en main y pasarlo al device
-__constant__ float d_Cos[degreeBins];
-__constant__ float d_Sin[degreeBins];
-
-//*****************************************************************
 // TODO Kernel memoria compartida
 // __global__ void GPU_HoughTranShared(...)
 // {
 //   //TODO
 // }
 
-//  Kernel memoria Constante
+// Kernel memoria Constante
 __global__ void GPU_HoughTranConst(unsigned char *pic, int w, int h, int *acc, float rMax, float rScale)
 {
-   // Calculo gloID (Inciso 1)
+       // Calculo gloID (Inciso 1)
     int gloID = blockIdx.x * blockDim.x + threadIdx.x;
     if (gloID >= w * h)
         return;
@@ -118,24 +117,25 @@ __global__ void GPU_HoughTranConst(unsigned char *pic, int w, int h, int *acc, f
     int xCent = w / 2;
     int yCent = h / 2;
 
-    //  Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
+    // Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
     int xCoord = gloID % w - xCent;
     int yCoord = yCent - gloID / w;
 
-    // eventualmente usar memoria compartida para el acumulador
-
-    if (pic[gloID] > 0)
+     if (pic[gloID] > 0)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            // utilizar memoria constante para senos y cosenos
-            //float r = xCoord * cosf(tIdx) + yCoord * sinf(tIdx);//probar con esto para ver diferencia en tiempo
+            // memoria constante para senos y cosenos
+            // float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
             float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
             int rIdx = (r + rMax) / rScale;
+            
             // debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
             atomicAdd(acc + (rIdx * degreeBins + tIdx), 1);
         }
     }
+    __syncthreads();
+
 }
 
 // GPU kernel. One thread per image pixel is spawned.
@@ -150,18 +150,16 @@ __global__ void GPU_HoughTran(unsigned char *pic, int w, int h, int *acc, float 
     int xCent = w / 2;
     int yCent = h / 2;
 
-    // Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
+    //  Dibujar un rectangulo a modo de imagen sirve para visualizarlo mejor
     int xCoord = gloID % w - xCent;
     int yCoord = yCent - gloID / w;
 
-    // TODO eventualmente usar memoria compartida para el acumulador
 
     if (pic[gloID] > 0)
     {
         for (int tIdx = 0; tIdx < degreeBins; tIdx++)
         {
-            // utilizar memoria constante para senos y cosenos
-            //float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
+            // float r = xCoord * cos(tIdx) + yCoord * sin(tIdx); //probar con esto para ver diferencia en tiempo
             float r = xCoord * d_Cos[tIdx] + yCoord * d_Sin[tIdx];
             int rIdx = (r + rMax) / rScale;
             // debemos usar atomic, pero que race condition hay si somos un thread por pixel? explique
@@ -185,11 +183,6 @@ int main(int argc, char **argv)
     int w = inImg.x_dim;
     int h = inImg.y_dim;
 
-    float *d_Cos;
-    float *d_Sin;
-
-    //cudaMalloc((void **)&d_Cos, sizeof(float) * degreeBins);
-    //cudaMalloc((void **)&d_Sin, sizeof(float) * degreeBins);
 
     // CPU calculation
     CPU_HoughTran(inImg.pixels, w, h, &cpuht);
@@ -198,7 +191,6 @@ int main(int argc, char **argv)
     float *pcCos = (float *)malloc(sizeof(float) * degreeBins);
     float *pcSin = (float *)malloc(sizeof(float) * degreeBins);
     float rad = 0;
-
     for (i = 0; i < degreeBins; i++)
     {
         pcCos[i] = cos(rad);
@@ -209,11 +201,12 @@ int main(int argc, char **argv)
     float rMax = sqrt(1.0 * w * w + 1.0 * h * h) / 2;
     float rScale = 2 * rMax / rBins;
 
-    // Copiar valores de memoria constante en device 
+
+     // Copy values to the constant memory
     cudaMemcpyToSymbol(d_Cos, pcCos, sizeof(float) * degreeBins);
     cudaMemcpyToSymbol(d_Sin, pcSin, sizeof(float) * degreeBins);
-    
-    // TODO eventualmente volver memoria global
+
+
     //cudaMemcpy(d_Cos, pcCos, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
     //cudaMemcpy(d_Sin, pcSin, sizeof(float) * degreeBins, cudaMemcpyHostToDevice);
 
@@ -227,7 +220,6 @@ int main(int argc, char **argv)
 
     cudaMalloc((void **)&d_in, sizeof(unsigned char) * w * h);
     cudaMalloc((void **)&d_hough, sizeof(int) * degreeBins * rBins);
-    
     cudaMemcpy(d_in, h_in, sizeof(unsigned char) * w * h, cudaMemcpyHostToDevice);
     cudaMemset(d_hough, 0, sizeof(int) * degreeBins * rBins);
 
@@ -288,4 +280,4 @@ int main(int argc, char **argv)
     cudaEventDestroy(stop);
 
     return 0;
-  }
+}

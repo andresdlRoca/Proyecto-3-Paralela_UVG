@@ -1,4 +1,4 @@
-all: pgm.o	houghGlobal houghShared houghTranConst
+all: pgm.o	houghGlobal houghTranConst houghShared
 
 houghGlobal:	houghGlobal.cu pgm.o
 	nvcc houghGlobal.cu pgm.o -o houghGlobal -I/usr/include/opencv4 -L/usr/lib -lopencv_core -lopencv_imgcodecs -lopencv_highgui -lopencv_imgproc
@@ -11,7 +11,7 @@ houghTranConst: houghTranConst.cu pgm.o
 
 pgm.o:	common/pgm.cpp
 	g++ -c common/pgm.cpp -o ./pgm.o
-all: pgm.o	houghGlobal houghShared houghTranConst
+all: pgm.o	houghGlobal houghTranConst houghShared
 
 houghGlobal:	houghGlobal.cu pgm.o
 	nvcc houghGlobal.cu pgm.o -o houghGlobal -I/usr/include/opencv4 -L/usr/lib -lopencv_core -lopencv_imgcodecs -lopencv_highgui -lopencv_imgproc
