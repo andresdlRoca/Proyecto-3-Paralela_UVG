@@ -22,41 +22,44 @@ const int degreeBins = 180 / degreeInc;
 const int rBins = 100;
 const float radInc = degreeInc * M_PI / 180;
 
-void drawLinesOnImage(unsigned char *pixels, int* acc, int w, int h, float rMax, float rScale, float threshold)
-{
-    // Create a cv::Mat object from the input image data
-    cv::Mat inputImage(h, w, CV_8U, pixels);
+void drawLinesOnImage(unsigned char *originalImage, int w, int h, int *h_hough, float rScale, float rMax, int threshold) {
 
-    // Create an output image with the same size and type as the input image
-    cv::Mat output = inputImage.clone();
+  cv::Mat img(h, w, CV_8UC1, originalImage);
+  cv::Mat imgColor;
+  cvtColor(img, imgColor, cv::COLOR_GRAY2BGR);
 
-    // Draw lines on the output image
-    for (int rIdx = 0; rIdx < rBins; ++rIdx)
-    {
-        for (int tIdx = 0; tIdx < degreeBins; ++tIdx)
-        {
-            int value = acc[rIdx * degreeBins + tIdx];
+  std::vector<std::pair<cv::Vec2f, int>>linesWithWeights;
 
-            // Check if the value is above the threshold
-            if (value > threshold)
-            {
-                float r = rIdx * rScale - rMax;
-                float theta = tIdx * radInc;
+  for (int rIdx = 0; rIdx < rBins; rIdx++) {
+    for (int tIdx = 0; tIdx < degreeBins; tIdx++) {
 
-                // Calculate the coordinates of two points on the line
-                int x1 = cvRound(w / 2 + r * cos(theta + M_PI / 2));
-                int y1 = cvRound(h / 2 + r * sin(theta + M_PI / 2));
-                int x2 = cvRound(w / 2 + r * cos(theta - M_PI / 2));
-                int y2 = cvRound(h / 2 + r * sin(theta - M_PI / 2));
+      int weight = h_hough[((rIdx * degreeBins) + tIdx)];
 
-                // Draw the line on the output image
-                cv::line(output, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 0, 255), 1);
-            }
-        }
+      if (weight > 0) {
+        float localReValue = ((rIdx * rScale) - rMax);
+        float theta = (tIdx * radInc);
+        linesWithWeights.push_back(std::make_pair(cv::Vec2f(theta, localReValue), weight));
+      }
     }
+  }
 
-    // Save the output image
-    cv::imwrite("output.jpg", output);
+  std::sort(linesWithWeights.begin(), linesWithWeights.end(), [](const std::pair<cv::Vec2f, int> &a, const std::pair<cv::Vec2f, int> &b) { return a.second > b.second;});
+
+  for (int i = 0; i < std::min(threshold, static_cast<int>(linesWithWeights.size())); i++) {
+
+    cv::Vec2f lineParams = linesWithWeights[i].first;
+    float r = lineParams[1];
+
+    double cosTheta = cos(lineParams[0]);
+    double sinTheta = sin(lineParams[0]);
+
+    double xValue = ((w / 2) - (r * cosTheta));
+    double yValue = ((h / 2) - (r * sinTheta));
+
+    cv::line(imgColor, cv::Point(cvRound(xValue + (1000 * (-sinTheta))), cvRound(yValue + (1000 * cosTheta))), cv::Point(cvRound(xValue - (1000 * (-sinTheta))), cvRound(yValue - (1000 * cosTheta))), cv::Scalar(255, 150, 0), 2, cv::LINE_AA);
+  }
+
+  cv::imwrite("lines_global.jpg", imgColor);
 }
 
 
@@ -229,8 +232,8 @@ int main(int argc, char **argv)
     }
 
     // Inciso 4 - Generacion de imagen output.jpg
-    float threshold = 5;
-    drawLinesOnImage(inImg.pixels, h_hough, w, h, rMax, rScale, threshold);
+    float threshold = 10;
+    drawLinesOnImage(inImg.pixels, w, h, h_hough, rScale, rMax, threshold);
     printf("Done!\n");
     printf("Time taken by GPU_HoughTran: %f ms\n", elapsedTime);
 
